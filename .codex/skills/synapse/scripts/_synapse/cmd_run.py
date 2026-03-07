@@ -30,6 +30,11 @@ def _render_prompt(template: str, *, vars: dict[str, str]) -> str:
         out = out.replace("{{" + k + "}}", v)
     return out
 
+
+def _missing_template_vars(template: str, *, vars: dict[str, str]) -> list[str]:
+    placeholders = sorted(set(re.findall(r"{{([A-Za-z0-9_]+)}}", template)))
+    return [key for key in placeholders if key not in vars]
+
 def cmd_run(args: argparse.Namespace) -> int:
     defaults = load_defaults()
     project_root = find_project_root(Path(args.project_dir))
@@ -81,13 +86,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             raise SynapseError(f"Var file not found for {k}: {pp}")
         vars[k] = pp.read_text(encoding="utf-8", errors="replace")
 
+    missing = _missing_template_vars(template, vars=vars)
     rendered = _render_prompt(template, vars=vars)
-    placeholders = sorted(set(re.findall(r"{{([A-Za-z0-9_]+)}}", template)))
-    if placeholders:
-        missing = [k for k in placeholders if ("{{" + k + "}}") in rendered]
-        if missing:
-            print(f"synapse run warning: unreplaced template variables: {', '.join(missing)}", file=sys.stderr)
-            print("synapse run hint: pass them via --var KEY=VALUE or --var-file KEY=PATH", file=sys.stderr)
+    if missing:
+        print(f"synapse run warning: unreplaced template variables: {', '.join(missing)}", file=sys.stderr)
+        print("synapse run hint: pass them via --var KEY=VALUE or --var-file KEY=PATH", file=sys.stderr)
 
     ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     prompt_out = unique_path(paths.prompts_dir / f"{ts}-{slug}-{phase}-{model}.prompt.md")
