@@ -1,8 +1,6 @@
 from __future__ import annotations
-
 import argparse
 import sys
-
 from _synapse.cmd_init import cmd_init
 from _synapse.cmd_pack import cmd_pack
 from _synapse.cmd_plan import cmd_plan
@@ -10,7 +8,6 @@ from _synapse.cmd_run import cmd_run
 from _synapse.cmd_ui import cmd_ui
 from _synapse.cmd_verify import cmd_verify
 from _synapse.common import SynapseError
-
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="synapse.py")
@@ -57,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub_run.add_argument("--var-file", action="append", default=[], help="Template variable KEY=PATH (file contents; repeatable)")
     sub_run.set_defaults(func=cmd_run)
 
-    sub_verify = sub.add_parser("verify")
+    sub_verify = sub.add_parser("verify", help="Auto-detect toolchain and run install/lint/typecheck/test")
     sub_verify.add_argument("--dry-run", action="store_true", help="Print planned commands only")
     sub_verify.add_argument("--no-install", action="store_true", help="Skip dependency installation steps")
     sub_verify.add_argument("--keep-going", action="store_true", help="Continue even if a step fails")
@@ -66,17 +63,19 @@ def build_parser() -> argparse.ArgumentParser:
     sub_ui = sub.add_parser("ui", help="Open a local web viewer for .synapse artifacts")
     sub_ui.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     sub_ui.add_argument("--port", type=int, default=8765, help="Bind port (default: 8765; 0 = auto)")
+    sub_ui.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Allow binding UI to a non-loopback host (disabled by default for safety)",
+    )
     sub_ui.add_argument("--no-open", action="store_true", help="Do not open the browser automatically")
     sub_ui.set_defaults(func=cmd_ui)
 
     return p
 
-
 def main(argv: list[str]) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    # Argparse will silently "last-wins" if two options share the same dest. We keep
-    # --resume for back-compat, but treat it as an alias and validate conflicts.
     resume_alias = getattr(args, "resume", None)
     resume_gemini = getattr(args, "resume_gemini", None)
     if resume_alias and resume_gemini and resume_alias != resume_gemini:
@@ -89,7 +88,6 @@ def main(argv: list[str]) -> int:
     except SynapseError as e:
         print(f"synapse error: {e}", file=sys.stderr)
         return 2
-
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))

@@ -3,7 +3,18 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Optional
-from .common import SynapsePaths, WriteGuard, read_json, read_text, utc_now_iso, write_json_atomic, write_text
+from .common import (
+    SynapsePaths,
+    WriteGuard,
+    file_lock,
+    normalize_storage_paths,
+    read_json,
+    read_text,
+    relative_storage_path,
+    utc_now_iso,
+    write_json_atomic,
+    write_text,
+)
 
 def extract_json_meta(markdown: str) -> dict[str, Any]:
     m = re.search(r"```json[ \t]*\r?\n(.*?)\r?\n```", markdown, flags=re.DOTALL | re.IGNORECASE)
@@ -49,11 +60,12 @@ def upsert_plan_file(
         "created_at": created_at,
         "updated_at": now,
         "request": request,
-        "context_pack": str(context_pack_path) if context_pack_path else None,
+        "context_pack": relative_storage_path(plan_path.parent.parent.parent, context_pack_path) if context_pack_path else None,
         "sessions": merged_sessions,
     }
     if extra:
         meta.update(extra)
+    meta = normalize_storage_paths(meta, project_root=plan_path.parent.parent.parent)
 
     doc = "\n".join(
         [
@@ -77,7 +89,6 @@ def upsert_plan_file(
     )
     write_text(plan_path, doc, guard=guard)
 
-
 def _replace_json_meta(markdown: str, meta: dict[str, Any]) -> str:
     block = "\n".join(["```json", json.dumps(meta, ensure_ascii=False, indent=2, sort_keys=True), "```"])
     pattern = re.compile(r"```json[ \t]*\r?\n(.*?)\r?\n```", flags=re.DOTALL | re.IGNORECASE)
@@ -85,22 +96,23 @@ def _replace_json_meta(markdown: str, meta: dict[str, Any]) -> str:
         raise ValueError("plan file is missing json meta block")
     return pattern.sub(lambda _m: block, markdown, count=1)
 
-
 def update_plan_session(*, plan_path: Path, model: str, session_id: str, guard: WriteGuard | None = None) -> None:
     if model not in ("gemini", "claude"):
         return
-    text = read_text(plan_path)
-    meta = extract_json_meta(text)
-    if not meta:
-        raise ValueError("plan file json meta could not be parsed")
-    sessions = meta.get("sessions")
-    if not isinstance(sessions, dict):
-        sessions = {}
-    sessions[model] = session_id
-    meta["sessions"] = sessions
-    meta["updated_at"] = utc_now_iso()
-    write_text(plan_path, _replace_json_meta(text, meta), guard=guard)
-
+    lock_path = plan_path.with_name(f"{plan_path.name}.lock")
+    with file_lock(lock_path, guard=guard):
+        text = read_text(plan_path)
+        meta = extract_json_meta(text)
+        if not meta:
+            raise ValueError("plan file json meta could not be parsed")
+        sessions = meta.get("sessions")
+        if not isinstance(sessions, dict):
+            sessions = {}
+        sessions[model] = session_id
+        meta["sessions"] = sessions
+        meta["updated_at"] = utc_now_iso()
+        meta = normalize_storage_paths(meta, project_root=plan_path.parent.parent.parent)
+        write_text(plan_path, _replace_json_meta(text, meta), guard=guard)
 
 def update_state(
     paths: SynapsePaths,
@@ -109,52 +121,58 @@ def update_state(
     sessions_by_slug: Optional[dict[str, dict[str, str]]] = None,
     guard: WriteGuard | None = None,
 ) -> None:
-    state = read_json(paths.state_json)
-    if not isinstance(state, dict):
-        state = {}
-    state.setdefault("version", 1)
-    state["project_root"] = str(paths.project_root)
-    state["updated_at"] = utc_now_iso()
-    state["last"] = last
-    sessions = state.get("sessions")
-    if not isinstance(sessions, dict):
-        sessions = {}
-        state["sessions"] = sessions
-    for model in ("gemini", "claude"):
-        m = sessions.get(model)
-        if not isinstance(m, dict):
-            m = {}
-            sessions[model] = m
-        by_slug = m.get("by_slug")
-        if not isinstance(by_slug, dict):
-            m["by_slug"] = {}
+    lock_path = paths.state_json.with_name(f"{paths.state_json.name}.lock")
+    with file_lock(lock_path, guard=guard):
+        state = read_json(paths.state_json)
+        if not isinstance(state, dict):
+            state = {}
+        state.setdefault("version", 1)
+        state["project_root"] = "."
+        state["updated_at"] = utc_now_iso()
+        state["last"] = normalize_storage_paths(last, project_root=paths.project_root)
+        sessions = state.get("sessions")
+        if not isinstance(sessions, dict):
+            sessions = {}
+            state["sessions"] = sessions
+        for model in ("gemini", "claude"):
+            m = sessions.get(model)
+            if not isinstance(m, dict):
+                m = {}
+                sessions[model] = m
+            by_slug = m.get("by_slug")
+            if not isinstance(by_slug, dict):
+                m["by_slug"] = {}
 
-    if sessions_by_slug:
-        for model, mapping in sessions_by_slug.items():
-            if model not in ("gemini", "claude"):
-                continue
-            by_slug = sessions[model]["by_slug"]
-            if isinstance(by_slug, dict) and isinstance(mapping, dict):
-                by_slug.update(mapping)
+        if sessions_by_slug:
+            for model, mapping in sessions_by_slug.items():
+                if model not in ("gemini", "claude"):
+                    continue
+                by_slug = sessions[model]["by_slug"]
+                if isinstance(by_slug, dict) and isinstance(mapping, dict):
+                    by_slug.update(mapping)
 
-    write_json_atomic(paths.state_json, state, guard=guard)
-
+        state = normalize_storage_paths(state, project_root=paths.project_root)
+        write_json_atomic(paths.state_json, state, guard=guard)
 
 def rebuild_index(paths: SynapsePaths, *, guard: WriteGuard | None = None) -> None:
-    plans: list[dict[str, Any]] = []
-    for p in sorted(paths.plan_dir.glob("*.md")):
-        try:
-            meta = extract_json_meta(read_text(p))
-        except Exception:
-            meta = {}
-        slug = meta.get("slug") or p.stem
-        sessions = meta.get("sessions") if isinstance(meta.get("sessions"), dict) else {}
-        plans.append(
-            {
-                "slug": slug,
-                "path": str(p),
-                "created_at": meta.get("created_at"),
-                "sessions": sessions,
-            }
-        )
-    write_json_atomic(paths.index_json, {"version": 1, "updated_at": utc_now_iso(), "plans": plans}, guard=guard)
+    lock_path = paths.index_json.with_name(f"{paths.index_json.name}.lock")
+    with file_lock(lock_path, guard=guard):
+        plans: list[dict[str, Any]] = []
+        for p in sorted(paths.plan_dir.glob("*.md")):
+            try:
+                meta = extract_json_meta(read_text(p))
+            except Exception:
+                meta = {}
+            slug = meta.get("slug") or p.stem
+            sessions = meta.get("sessions") if isinstance(meta.get("sessions"), dict) else {}
+            plans.append(
+                {
+                    "slug": slug,
+                    "path": relative_storage_path(paths.project_root, p),
+                    "created_at": meta.get("created_at"),
+                    "sessions": sessions,
+                }
+            )
+        index = {"version": 1, "updated_at": utc_now_iso(), "plans": plans}
+        index = normalize_storage_paths(index, project_root=paths.project_root)
+        write_json_atomic(paths.index_json, index, guard=guard)

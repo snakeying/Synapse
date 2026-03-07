@@ -116,12 +116,70 @@ def _is_sensitive_file_candidate(path: Path) -> bool:
         return True
     if name.startswith(".env."):
         return True
+    if name.startswith("appsettings.") and name.endswith(".json"):
+        return True
+    if name in {
+        "credentials.json",
+        "credentials.yaml",
+        "credentials.yml",
+        "credentials.toml",
+        "secret.json",
+        "secret.yaml",
+        "secret.yml",
+        "secret.toml",
+        "secrets.json",
+        "secrets.yaml",
+        "secrets.yml",
+        "secrets.toml",
+        "terraform.tfvars",
+        "terraform.tfvars.json",
+        "kubeconfig",
+    }:
+        return True
     if name in {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"}:
         return True
     ext = path.suffix.lower()
-    if ext in {".pem", ".key", ".p12", ".pfx", ".kdbx"}:
+    if ext in {".pem", ".key", ".p12", ".pfx", ".kdbx", ".tfvars", ".tfstate", ".mobileprovision", ".p8", ".cer", ".crt", ".der"}:
         return True
     return False
+def _split_diff_chunks(diff_text: str) -> list[list[str]]:
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git ") and current:
+            chunks.append(current)
+            current = [line]
+        else:
+            current.append(line)
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _chunk_relpath(lines: list[str]) -> str | None:
+    if not lines:
+        return None
+    m = re.match(r"diff --git a/(.*?) b/(.*?)$", lines[0])
+    if m:
+        return m.group(2)
+    for line in lines:
+        if line.startswith("+++ b/"):
+            return line[6:]
+    return None
+
+
+def _filter_sensitive_diff(project_root: Path, diff_text: str) -> tuple[str, list[str]]:
+    if not diff_text.strip():
+        return diff_text, []
+    kept: list[str] = []
+    redacted: list[str] = []
+    for chunk in _split_diff_chunks(diff_text):
+        rel = _chunk_relpath(chunk)
+        if rel and _is_sensitive_file_candidate(project_root / rel):
+            redacted.append(rel.replace("\\", "/"))
+            continue
+        kept.extend(chunk)
+    return "\n".join(kept).strip("\n"), redacted
 
 def select_key_files(project_root: Path, *, max_files: int, extra_files: list[Path] | None = None) -> list[Path]:
     candidates: list[Path] = []
@@ -286,10 +344,16 @@ def build_context_pack(
         diff = run_cmd(["git", "diff"], cwd=project_root, timeout_seconds=60)
         diff_text = "\n".join(diff.stdout.splitlines()[:diff_max_lines])
         diff_text = truncate_bytes(diff_text, diff_max_bytes).rstrip()
+        diff_text, redacted_diff_files = _filter_sensitive_diff(project_root, diff_text)
         parts.append("### `git diff` (truncated)")
         parts.append("")
+        if redacted_diff_files:
+            preview = ", ".join(redacted_diff_files[:5])
+            suffix = "" if len(redacted_diff_files) <= 5 else f" (+{len(redacted_diff_files) - 5} more)"
+            parts.append(f"- note: omitted diff bodies for {len(redacted_diff_files)} sensitive file(s): {preview}{suffix}")
+            parts.append("")
         parts.append("```diff")
-        parts.append(diff_text or "")
+        parts.append(diff_text or "(all diff bodies omitted or no diff)")
         parts.append("```")
         parts.append("")
     else:
@@ -362,6 +426,52 @@ def build_context_pack(
                 "--glob",
                 "!**/*.kdbx",
                 "--glob",
+                "!**/credentials.json",
+                "--glob",
+                "!**/credentials.yaml",
+                "--glob",
+                "!**/credentials.yml",
+                "--glob",
+                "!**/credentials.toml",
+                "--glob",
+                "!**/secret.json",
+                "--glob",
+                "!**/secret.yaml",
+                "--glob",
+                "!**/secret.yml",
+                "--glob",
+                "!**/secret.toml",
+                "--glob",
+                "!**/secrets.json",
+                "--glob",
+                "!**/secrets.yaml",
+                "--glob",
+                "!**/secrets.yml",
+                "--glob",
+                "!**/secrets.toml",
+                "--glob",
+                "!**/appsettings*.json",
+                "--glob",
+                "!**/terraform.tfvars",
+                "--glob",
+                "!**/terraform.tfvars.json",
+                "--glob",
+                "!**/*.tfvars",
+                "--glob",
+                "!**/*.tfstate",
+                "--glob",
+                "!**/kubeconfig",
+                "--glob",
+                "!**/*.mobileprovision",
+                "--glob",
+                "!**/*.p8",
+                "--glob",
+                "!**/*.cer",
+                "--glob",
+                "!**/*.crt",
+                "--glob",
+                "!**/*.der",
+                "--glob",
                 "!**/dist/**",
                 "--glob",
                 "!**/build/**",
@@ -376,6 +486,8 @@ def build_context_pack(
                 cwd=project_root,
                 timeout_seconds=60,
             )
+            if rg.code == 2 and "No files were searched" in (rg.stderr or ""):
+                rg = type(rg)(code=1, stdout="", stderr=rg.stderr)
             if rg.code not in (0, 1):
                 parts.append("```")
                 msg = f"(rg failed: exit_code={rg.code})"

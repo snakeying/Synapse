@@ -1,9 +1,12 @@
 from __future__ import annotations
+from contextlib import contextmanager
 import datetime as _dt
 import json
 import os
 import re
 import subprocess
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -120,12 +123,104 @@ def write_json_atomic(path: Path, data: Any, *, guard: WriteGuard | None = None)
     if guard:
         guard.assert_allowed(path)
     safe_mkdir(path.parent)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     if guard:
         guard.assert_allowed(tmp)
     content = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    tmp.write_text(content, encoding="utf-8", newline="\n")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(content, encoding="utf-8", newline="\n")
+        os.replace(tmp, path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+
+@contextmanager
+def file_lock(
+    lock_path: Path,
+    *,
+    timeout_seconds: float = 30.0,
+    poll_interval_seconds: float = 0.1,
+    stale_seconds: float = 3600.0,
+    guard: WriteGuard | None = None,
+):
+    if guard:
+        guard.assert_allowed(lock_path)
+    safe_mkdir(lock_path.parent)
+    deadline = time.monotonic() + max(0.1, timeout_seconds)
+    fd: Optional[int] = None
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, f"pid={os.getpid()} time={utc_now_iso()}\n".encode("utf-8", errors="replace"))
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - lock_path.stat().st_mtime
+                if stale_seconds > 0 and age > stale_seconds:
+                    try:
+                        lock_path.unlink(missing_ok=True)
+                        continue
+                    except OSError:
+                        pass
+            except FileNotFoundError:
+                continue
+            if time.monotonic() >= deadline:
+                raise SynapseError(f"Timed out acquiring file lock: {lock_path}")
+            time.sleep(max(0.01, poll_interval_seconds))
+    try:
+        yield
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+        try:
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def relative_storage_path(project_root: Path, path: Path | str | None) -> str | None:
+    if path is None:
+        return None
+    if isinstance(path, Path):
+        p = path
+    else:
+        raw = str(path).strip()
+        if not raw:
+            return raw
+        p = Path(raw)
+    try:
+        proj = project_root.resolve()
+        full = p if p.is_absolute() else (project_root / p)
+        rel = full.resolve().relative_to(proj)
+        return "." if not rel.parts else str(rel).replace("\\", "/")
+    except Exception:
+        return str(p).replace("\\", "/")
+
+
+def normalize_storage_paths(value: Any, *, project_root: Path) -> Any:
+    if isinstance(value, dict):
+        return {k: normalize_storage_paths(v, project_root=project_root) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_storage_paths(v, project_root=project_root) for v in value]
+    if isinstance(value, tuple):
+        return [normalize_storage_paths(v, project_root=project_root) for v in value]
+    if isinstance(value, Path):
+        return relative_storage_path(project_root, value)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return value
+        p = Path(value)
+        if p.is_absolute() or (p.anchor and not p.is_absolute()):
+            return relative_storage_path(project_root, value)
+    return value
 
 def defaults_path() -> Path:
     skill_dir = Path(__file__).resolve().parents[2]
@@ -243,7 +338,7 @@ def ensure_synapse_layout(paths: SynapsePaths, *, guard: WriteGuard | None = Non
             paths.state_json,
             {
                 "version": 1,
-                "project_root": str(paths.project_root),
+                "project_root": ".",
                 "created_at": utc_now_iso(),
                 "updated_at": utc_now_iso(),
                 "last": {},
@@ -257,7 +352,7 @@ def ensure_synapse_layout(paths: SynapsePaths, *, guard: WriteGuard | None = Non
     if not isinstance(state, dict):
         raise SynapseError(f"Invalid state.json (not an object): {paths.state_json}")
     state.setdefault("version", 1)
-    state.setdefault("project_root", str(paths.project_root))
+    state.setdefault("project_root", ".")
     state.setdefault("created_at", utc_now_iso())
     state["updated_at"] = utc_now_iso()
     state.setdefault("last", {})

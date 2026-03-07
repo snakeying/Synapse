@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import http.server
+import ipaddress
 import json
 import threading
 import urllib.parse
@@ -53,6 +54,18 @@ def _within_synapse(synapse_root: Path, p: Path) -> bool:
     except Exception:
         return False
 
+
+def _is_loopback_host(host: str) -> bool:
+    h = (host or "").strip()
+    if not h:
+        return False
+    if h.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
 def cmd_ui(args: argparse.Namespace) -> int:
     project_root = find_project_root(Path(args.project_dir))
     paths = synapse_paths(project_root)
@@ -76,7 +89,13 @@ def cmd_ui(args: argparse.Namespace) -> int:
 
     host = str(getattr(args, "host", "127.0.0.1"))
     port = int(getattr(args, "port", 8765))
+    allow_remote = bool(getattr(args, "allow_remote", False))
     open_browser = not bool(getattr(args, "no_open", False))
+    if not _is_loopback_host(host) and not allow_remote:
+        raise SynapseError(
+            f"Refusing to bind UI to non-loopback host without --allow-remote: {host!r}. "
+            "This server exposes .synapse artifacts, including prompts/logs that may contain sensitive data."
+        )
 
     state_files: list[str] = []
     for p in (paths.state_json, paths.index_json):
@@ -136,6 +155,8 @@ def cmd_ui(args: argparse.Namespace) -> int:
     httpd = http.server.ThreadingHTTPServer((host, port), Handler)
     url = f"http://{host}:{httpd.server_address[1]}/"
     print(f"ui: {url}")
+    if not _is_loopback_host(host):
+        print("ui warning: non-loopback host enabled; anyone who can reach this address can read .synapse artifacts.")
     if open_browser:
         threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
     try:

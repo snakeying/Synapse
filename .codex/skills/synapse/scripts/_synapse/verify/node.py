@@ -9,7 +9,7 @@ def _read_package_json_scripts(project_root: Path) -> dict[str, str]:
     if not p.exists():
         return {}
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8-sig", errors="replace"))
     except Exception:
         return {}
     if not isinstance(data, dict):

@@ -5,12 +5,13 @@ Open a local **read-only** web viewer for `./.synapse/**` (prompts/outputs/patch
 ## Usage
 
 ```bash
-synapse ui [--host <host>] [--port <port>] [--no-open]
+synapse ui [--host <host>] [--port <port>] [--allow-remote] [--no-open]
 ```
 
 ## Notes
 
 - The viewer serves **only** `.synapse/**` files.
+- By default, non-loopback hosts are rejected. To bind `0.0.0.0` or another LAN address, pass `--allow-remote` explicitly.
 - Default view: **Timeline** grouped by `slug → phase → model`. Use **Browse** to see the raw folder lists.
 - The process runs until interrupted (Ctrl+C).
 
@@ -32,3 +33,4 @@ Optional flags:
 
 - If you don't want the browser to open automatically: add `--no-open`
 - To bind a specific port: replace `--port 0` with `--port 8765` (default)
+- To bind a non-local host such as `0.0.0.0`: add `--allow-remote`
