@@ -2,19 +2,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from typing import Optional
-from .common import (
-    SynapseError,
-    WriteGuard,
-    ensure_synapse_layout,
-    find_project_root,
-    load_defaults,
-    resolve_path_within_root,
-    slugify,
-    synapse_paths,
-    unique_path,
-    utc_now_iso,
-    write_text,
-)
+from .config import load_defaults
+from .file_ops import utc_now_iso, write_text
+from .paths import ensure_synapse_layout, find_project_root, slugify, synapse_paths, unique_path
+from .safety import SynapseError, WriteGuard
+from .storage_paths import resolve_path_within_root
 from .context_pack import build_context_pack
 from .state import rebuild_index, update_state, upsert_plan_file
 

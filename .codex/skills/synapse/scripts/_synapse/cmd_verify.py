@@ -5,19 +5,11 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional
-from .common import (
-    SynapseError,
-    WriteGuard,
-    ensure_synapse_layout,
-    find_project_root,
-    load_defaults,
-    run_cmd,
-    slugify,
-    synapse_paths,
-    unique_path,
-    utc_now_iso,
-    write_text,
-)
+from .config import load_defaults
+from .file_ops import utc_now_iso, write_text
+from .paths import ensure_synapse_layout, find_project_root, slugify, synapse_paths, unique_path
+from .process_utils import run_cmd
+from .safety import SynapseError, WriteGuard
 from .state import rebuild_index, update_state
 from .verify.dotnet import detect_dotnet_steps
 from .verify.golang import detect_go_steps

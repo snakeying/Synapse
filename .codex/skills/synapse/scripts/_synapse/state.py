@@ -3,18 +3,10 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Optional
-from .common import (
-    SynapsePaths,
-    WriteGuard,
-    file_lock,
-    normalize_storage_paths,
-    read_json,
-    read_text,
-    relative_storage_path,
-    utc_now_iso,
-    write_json_atomic,
-    write_text,
-)
+from .file_ops import file_lock, read_json, read_text, utc_now_iso, write_json_atomic, write_text
+from .paths import SynapsePaths
+from .safety import WriteGuard
+from .storage_paths import normalize_storage_paths, relative_storage_path
 
 def extract_json_meta(markdown: str) -> dict[str, Any]:
     m = re.search(r"```json[ \t]*\r?\n(.*?)\r?\n```", markdown, flags=re.DOTALL | re.IGNORECASE)

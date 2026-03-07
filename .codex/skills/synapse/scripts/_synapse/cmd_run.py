@@ -5,18 +5,10 @@ import re
 import sys
 from pathlib import Path
 from typing import Optional
-from .common import (
-    SynapseError,
-    WriteGuard,
-    ensure_synapse_layout,
-    find_project_root,
-    load_defaults,
-    slugify,
-    synapse_paths,
-    unique_path,
-    utc_now_iso,
-    write_text,
-)
+from .config import load_defaults
+from .file_ops import utc_now_iso, write_text
+from .paths import ensure_synapse_layout, find_project_root, slugify, synapse_paths, unique_path
+from .safety import SynapseError, WriteGuard
 from .llm import extract_unified_diff, run_model_with_retries
 from .state import rebuild_index, update_plan_session, update_state
 

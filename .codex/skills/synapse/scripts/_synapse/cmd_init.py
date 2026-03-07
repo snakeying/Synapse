@@ -2,7 +2,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from .agents_md import ensure_agents_md, ensure_gitignore
-from .common import WriteGuard, ensure_synapse_layout, find_project_root, load_defaults, synapse_paths, utc_now_iso
+from .config import load_defaults
+from .file_ops import utc_now_iso
+from .paths import ensure_synapse_layout, find_project_root, synapse_paths
+from .safety import WriteGuard
 from .state import rebuild_index, update_state
 
 def cmd_init(args: argparse.Namespace) -> int:

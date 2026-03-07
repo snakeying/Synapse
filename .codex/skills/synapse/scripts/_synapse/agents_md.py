@@ -1,7 +1,8 @@
 from __future__ import annotations
 import re
 from pathlib import Path
-from .common import WriteGuard, read_text, write_text
+from .file_ops import read_text, write_text
+from .safety import WriteGuard
 
 SYNAPSE_BLOCK_BEGIN = "<!-- SYNAPSE-BEGIN -->"
 SYNAPSE_BLOCK_END = "<!-- SYNAPSE-END -->"

@@ -7,7 +7,8 @@ import threading
 import urllib.parse
 import webbrowser
 from pathlib import Path
-from .common import SynapseError, find_project_root, synapse_paths
+from .paths import find_project_root, synapse_paths
+from .safety import SynapseError
 
 def _load_ui_html() -> bytes:
     skill_root = Path(__file__).resolve().parents[2]

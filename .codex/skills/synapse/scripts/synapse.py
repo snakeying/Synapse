@@ -7,7 +7,7 @@ from _synapse.cmd_plan import cmd_plan
 from _synapse.cmd_run import cmd_run
 from _synapse.cmd_ui import cmd_ui
 from _synapse.cmd_verify import cmd_verify
-from _synapse.common import SynapseError
+from _synapse.safety import SynapseError
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="synapse.py")
